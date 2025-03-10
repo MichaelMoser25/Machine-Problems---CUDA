@@ -1,3 +1,6 @@
+// Michael Moser
+// 20349246
+
 #include <stdio.h>
 #include <cuda_runtime.h>
 
