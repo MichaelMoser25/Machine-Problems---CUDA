@@ -165,8 +165,13 @@ void runMatrixMultiplication(int matrixWidth, int blockWidth) {
         // Timing single-thread GPU kernel (for part 2)
         if (matrixWidth <= 1024) { // Limited to smaller matrices due to performance
             CHECK_CUDA_ERROR(cudaEventRecord(start, 0));
-            matrixMulSingleThreadKernel<<<1, 1>>>(d_P, d_M, d_N, matrixWidth);
-            CHECK_CUDA_ERROR(cudaGetLastError()); // Check for kernel launch errors
+            dim3 singleBlock(1, 1);
+            dim3 singleGrid(1, 1);
+            matrixMulSingleThreadKernel<<<singleGrid, singleBlock>>>(d_P, d_M, d_N, matrixWidth);
+            cudaError_t err = cudaGetLastError();
+            if (err != cudaSuccess) {
+                printf("Single-thread kernel launch error: %s\n", cudaGetErrorString(err));
+            }
             CHECK_CUDA_ERROR(cudaEventRecord(stop, 0));
             CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
             CHECK_CUDA_ERROR(cudaEventElapsedTime(&elapsedTime, start, stop));
@@ -176,13 +181,16 @@ void runMatrixMultiplication(int matrixWidth, int blockWidth) {
         }
         
         // Timing multi-threaded GPU kernel (for part 3)
-        dim3 blockDim(blockWidth, blockWidth);
-        dim3 gridDim((matrixWidth + blockWidth - 1) / blockWidth, 
-                     (matrixWidth + blockWidth - 1) / blockWidth);
+        dim3 blocks(blockWidth, blockWidth);
+        dim3 grid((matrixWidth + blockWidth - 1) / blockWidth, 
+                  (matrixWidth + blockWidth - 1) / blockWidth);
         
         CHECK_CUDA_ERROR(cudaEventRecord(start, 0));
-        matrixMulKernel<<<gridDim, blockDim>>>(d_P, d_M, d_N, matrixWidth);
-        CHECK_CUDA_ERROR(cudaGetLastError()); // Check for kernel launch errors
+        matrixMulKernel<<<grid, blocks>>>(d_P, d_M, d_N, matrixWidth);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("Multi-thread kernel launch error: %s\n", cudaGetErrorString(err));
+        }
         CHECK_CUDA_ERROR(cudaEventRecord(stop, 0));
         CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
         CHECK_CUDA_ERROR(cudaEventElapsedTime(&elapsedTime, start, stop));
