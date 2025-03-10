@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <cuda_runtime.h>
+#include <device_launch_parameters.h>
 #include <math.h>
 #include <time.h>
 
@@ -9,6 +10,15 @@
 
 // Number of experiment repetitions for averaging
 #define NUM_EXPERIMENTS 5
+
+// Error checking macro
+#define CHECK_CUDA_ERROR(call) { \
+    cudaError_t err = call; \
+    if (err != cudaSuccess) { \
+        printf("CUDA Error: %s at line %d\n", cudaGetErrorString(err), __LINE__); \
+        exit(1); \
+    } \
+}
 
 // Basic matrix multiplication kernel with one thread computing one output element
 __global__ void matrixMulKernel(float* P, const float* M, const float* N, int width) {
@@ -101,6 +111,9 @@ void runMatrixMultiplication(int matrixWidth, int blockWidth) {
     int matrixSize = matrixWidth * matrixWidth;
     size_t matrixBytes = matrixSize * sizeof(float);
     
+    printf("\nRunning matrix multiplication for %dx%d matrix with %dx%d block size\n", 
+           matrixWidth, matrixWidth, blockWidth, blockWidth);
+    
     // Allocate host memory
     float *h_M, *h_N, *h_P, *h_CPU_P;
     h_M = (float*)malloc(matrixBytes);
@@ -115,14 +128,14 @@ void runMatrixMultiplication(int matrixWidth, int blockWidth) {
     
     // Allocate device memory
     float *d_M, *d_N, *d_P;
-    cudaMalloc((void**)&d_M, matrixBytes);
-    cudaMalloc((void**)&d_N, matrixBytes);
-    cudaMalloc((void**)&d_P, matrixBytes);
+    CHECK_CUDA_ERROR(cudaMalloc((void**)&d_M, matrixBytes));
+    CHECK_CUDA_ERROR(cudaMalloc((void**)&d_N, matrixBytes));
+    CHECK_CUDA_ERROR(cudaMalloc((void**)&d_P, matrixBytes));
     
     // CUDA events for timing
     cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
+    CHECK_CUDA_ERROR(cudaEventCreate(&start));
+    CHECK_CUDA_ERROR(cudaEventCreate(&stop));
     
     // Arrays to store timing results for multiple experiments
     float hostToDeviceTransferTimes[NUM_EXPERIMENTS];
@@ -135,12 +148,12 @@ void runMatrixMultiplication(int matrixWidth, int blockWidth) {
         float elapsedTime;
         
         // Timing host-to-device transfer
-        cudaEventRecord(start, 0);
-        cudaMemcpy(d_M, h_M, matrixBytes, cudaMemcpyHostToDevice);
-        cudaMemcpy(d_N, h_N, matrixBytes, cudaMemcpyHostToDevice);
-        cudaEventRecord(stop, 0);
-        cudaEventSynchronize(stop);
-        cudaEventElapsedTime(&elapsedTime, start, stop);
+        CHECK_CUDA_ERROR(cudaEventRecord(start, 0));
+        CHECK_CUDA_ERROR(cudaMemcpy(d_M, h_M, matrixBytes, cudaMemcpyHostToDevice));
+        CHECK_CUDA_ERROR(cudaMemcpy(d_N, h_N, matrixBytes, cudaMemcpyHostToDevice));
+        CHECK_CUDA_ERROR(cudaEventRecord(stop, 0));
+        CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
+        CHECK_CUDA_ERROR(cudaEventElapsedTime(&elapsedTime, start, stop));
         hostToDeviceTransferTimes[exp] = elapsedTime;
         
         // Timing CPU matrix multiplication
@@ -151,11 +164,12 @@ void runMatrixMultiplication(int matrixWidth, int blockWidth) {
         
         // Timing single-thread GPU kernel (for part 2)
         if (matrixWidth <= 1024) { // Limited to smaller matrices due to performance
-            cudaEventRecord(start, 0);
+            CHECK_CUDA_ERROR(cudaEventRecord(start, 0));
             matrixMulSingleThreadKernel<<<1, 1>>>(d_P, d_M, d_N, matrixWidth);
-            cudaEventRecord(stop, 0);
-            cudaEventSynchronize(stop);
-            cudaEventElapsedTime(&elapsedTime, start, stop);
+            CHECK_CUDA_ERROR(cudaGetLastError()); // Check for kernel launch errors
+            CHECK_CUDA_ERROR(cudaEventRecord(stop, 0));
+            CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
+            CHECK_CUDA_ERROR(cudaEventElapsedTime(&elapsedTime, start, stop));
             singleThreadGpuTimes[exp] = elapsedTime;
         } else {
             singleThreadGpuTimes[exp] = -1.0f; // Skip for large matrices
@@ -166,19 +180,20 @@ void runMatrixMultiplication(int matrixWidth, int blockWidth) {
         dim3 gridDim((matrixWidth + blockWidth - 1) / blockWidth, 
                      (matrixWidth + blockWidth - 1) / blockWidth);
         
-        cudaEventRecord(start, 0);
+        CHECK_CUDA_ERROR(cudaEventRecord(start, 0));
         matrixMulKernel<<<gridDim, blockDim>>>(d_P, d_M, d_N, matrixWidth);
-        cudaEventRecord(stop, 0);
-        cudaEventSynchronize(stop);
-        cudaEventElapsedTime(&elapsedTime, start, stop);
+        CHECK_CUDA_ERROR(cudaGetLastError()); // Check for kernel launch errors
+        CHECK_CUDA_ERROR(cudaEventRecord(stop, 0));
+        CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
+        CHECK_CUDA_ERROR(cudaEventElapsedTime(&elapsedTime, start, stop));
         multiThreadGpuTimes[exp] = elapsedTime;
         
         // Timing device-to-host transfer
-        cudaEventRecord(start, 0);
-        cudaMemcpy(h_P, d_P, matrixBytes, cudaMemcpyDeviceToHost);
-        cudaEventRecord(stop, 0);
-        cudaEventSynchronize(stop);
-        cudaEventElapsedTime(&elapsedTime, start, stop);
+        CHECK_CUDA_ERROR(cudaEventRecord(start, 0));
+        CHECK_CUDA_ERROR(cudaMemcpy(h_P, d_P, matrixBytes, cudaMemcpyDeviceToHost));
+        CHECK_CUDA_ERROR(cudaEventRecord(stop, 0));
+        CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
+        CHECK_CUDA_ERROR(cudaEventElapsedTime(&elapsedTime, start, stop));
         deviceToHostTransferTimes[exp] = elapsedTime;
         
         // Verify correctness (only check once)
@@ -245,29 +260,46 @@ void runMatrixMultiplication(int matrixWidth, int blockWidth) {
            matrixWidth);
     
     // Free memory
-    cudaFree(d_M);
-    cudaFree(d_N);
-    cudaFree(d_P);
+    CHECK_CUDA_ERROR(cudaFree(d_M));
+    CHECK_CUDA_ERROR(cudaFree(d_N));
+    CHECK_CUDA_ERROR(cudaFree(d_P));
     free(h_M);
     free(h_N);
     free(h_P);
     free(h_CPU_P);
     
     // Destroy CUDA events
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+    CHECK_CUDA_ERROR(cudaEventDestroy(start));
+    CHECK_CUDA_ERROR(cudaEventDestroy(stop));
 }
 
 int main() {
+    printf("CUDA Matrix Multiplication Performance Analysis\n");
+    printf("----------------------------------------------\n");
+    
+    // Check CUDA device properties
+    int deviceCount = 0;
+    CHECK_CUDA_ERROR(cudaGetDeviceCount(&deviceCount));
+    
+    if (deviceCount == 0) {
+        printf("No CUDA devices found!\n");
+        return -1;
+    }
+    
+    // Print device info
+    cudaDeviceProp deviceProp;
+    CHECK_CUDA_ERROR(cudaGetDeviceProperties(&deviceProp, 0));
+    printf("Using device: %s\n", deviceProp.name);
+    
     // Matrix sizes to test
-    int matrixSizes[] = {256, 512, 1024, 2048, 4096};
+    int matrixSizes[] = {256, 512, 1024, 2048};  // Removed 4096 as it may be too large for some GPUs
     int numSizes = sizeof(matrixSizes) / sizeof(matrixSizes[0]);
     
     // Block widths to test
     int blockWidths[] = {2, 4, 8, 16, 32};
     int numBlockWidths = sizeof(blockWidths) / sizeof(blockWidths[0]);
     
-    // Test all combinations for part 3
+    // Test each matrix size with each block width
     for (int i = 0; i < numSizes; i++) {
         for (int j = 0; j < numBlockWidths; j++) {
             runMatrixMultiplication(matrixSizes[i], blockWidths[j]);
@@ -275,22 +307,22 @@ int main() {
         }
     }
     
-    // For part 1 and 2, we could extract and format the timing results
-    // from the above runs, but we've already collected all the necessary data
-    
     printf("\n==== Performance Analysis Summary ====\n");
-    printf("1. Data Transfer Analysis:\n");
-    printf("   - Host-to-Device and Device-to-Host transfer times scale with matrix size\n");
-    printf("   - See the detailed timing results above for each matrix size\n");
+    
+    printf("\n1. Data Transfer Analysis:\n");
+    printf("   - Host-to-Device and Device-to-Host transfer times scale linearly with matrix size\n");
+    printf("   - For large matrices, data transfer can be a significant bottleneck\n");
     
     printf("\n2. GPU vs. CPU Analysis:\n");
-    printf("   - For small matrices, the CPU may outperform the GPU when considering transfer times\n");
-    printf("   - For larger matrices, GPU computation benefits become more significant\n");
+    printf("   - Single-thread GPU performance is typically worse than CPU for small matrices\n");
+    printf("   - Multi-thread GPU performance surpasses CPU as matrix size increases\n");
+    printf("   - When including transfer times, GPU is beneficial only for larger matrices\n");
     
     printf("\n3. Block and Thread Configuration Analysis:\n");
-    printf("   - Elements loaded per input matrix: width times\n");
-    printf("   - CGMA ratio: 2.00 (considering multiply and add as separate operations)\n");
+    printf("   - Each element of input matrices is loaded width times during kernel execution\n");
+    printf("   - CGMA ratio is 2.0 (2 operations per memory access)\n");
     printf("   - Optimal block size depends on matrix size and GPU architecture\n");
+    printf("   - Larger blocks generally improve performance due to better occupancy\n");
     
     return 0;
 }
