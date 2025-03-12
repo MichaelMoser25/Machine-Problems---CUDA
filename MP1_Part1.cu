@@ -7,7 +7,8 @@
 int main() {
     int deviceCount;
     cudaError_t error = cudaGetDeviceCount(&deviceCount);
-    
+
+    // Used for debugging errors
     if (error != cudaSuccess) {
         printf("Error getting device count: %s\n", cudaGetErrorString(error));
         return -1;
