@@ -130,16 +130,16 @@ int main() {
         printf("Compute Mode: %s\n", computeMode);
         
         // ECC support
-        printf("ECC Enabled: %s\n", deviceProp.ECCEnabled ? "Yes" : "No");
+        // printf("ECC Enabled: %s\n", deviceProp.ECCEnabled ? "Yes" : "No");
         
         // Unified addressing
-        printf("Unified Addressing: %s\n", deviceProp.unifiedAddressing ? "Yes" : "No");
+        // printf("Unified Addressing: %s\n", deviceProp.unifiedAddressing ? "Yes" : "No");
         
         // Concurrent kernels
-        printf("Concurrent Kernels: %s\n", deviceProp.concurrentKernels ? "Yes" : "No");
+        // printf("Concurrent Kernels: %s\n", deviceProp.concurrentKernels ? "Yes" : "No");
         
         // Async engine count
-        printf("Async Engine Count: %d\n", deviceProp.asyncEngineCount);
+        /// printf("Async Engine Count: %d\n", deviceProp.asyncEngineCount);
         
         printf("\n");
     }
