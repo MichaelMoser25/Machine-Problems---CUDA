@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <math.h>
 #include <cuda_runtime.h>
-#include <device_launch_parameters.h>
 
 // Error checking macro
 #define CHECK_CUDA_ERROR(call) { \
@@ -13,9 +12,6 @@
         exit(EXIT_FAILURE); \
     } \
 }
-
-// Define the maximum tile width we'll support
-#define MAX_TILE_WIDTH 32
 
 // CPU matrix multiplication for verification
 void matrixMultiplyCPU(float *P, const float *M, const float *N, int width) {
@@ -44,53 +40,45 @@ __global__ void matrixMultiplyBasic(float *P, const float *M, const float *N, in
     }
 }
 
-// Tiled matrix multiplication with shared memory
-// Note: This version uses a runtime variable for tile width
-__global__ void matrixMultiplyTiled(float *P, const float *M, const float *N, int width, int tileWidth) {
-    // Dynamically sized shared memory declared externally
-    extern __shared__ float sharedMem[];
+// Tiled matrix multiplication for tile width 16
+__global__ void matrixMultiplyTiled16(float *P, const float *M, const float *N, int width) {
+    __shared__ float M_tile[16][16];
+    __shared__ float N_tile[16][16];
     
-    // Divide shared memory: first half for M_tile, second half for N_tile
-    float *M_tile = sharedMem;
-    float *N_tile = &sharedMem[tileWidth * tileWidth];
-    
-    int bx = blockIdx.x;
-    int by = blockIdx.y;
     int tx = threadIdx.x;
     int ty = threadIdx.y;
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
     
-    // Calculate the row and column indices for this thread
-    int row = by * tileWidth + ty;
-    int col = bx * tileWidth + tx;
+    int row = by * 16 + ty;
+    int col = bx * 16 + tx;
     
     float sum = 0.0f;
     
-    // Loop over all tiles
-    for (int tile = 0; tile < (width + tileWidth - 1) / tileWidth; tile++) {
-        // Load tiles into shared memory
-        if (row < width && tile * tileWidth + tx < width) {
-            M_tile[ty * tileWidth + tx] = M[row * width + tile * tileWidth + tx];
+    for (int tile = 0; tile < (width + 16 - 1) / 16; tile++) {
+        // Load tiles
+        if (row < width && tile * 16 + tx < width) {
+            M_tile[ty][tx] = M[row * width + tile * 16 + tx];
         } else {
-            M_tile[ty * tileWidth + tx] = 0.0f;
+            M_tile[ty][tx] = 0.0f;
         }
         
-        if (tile * tileWidth + ty < width && col < width) {
-            N_tile[ty * tileWidth + tx] = N[(tile * tileWidth + ty) * width + col];
+        if (tile * 16 + ty < width && col < width) {
+            N_tile[ty][tx] = N[(tile * 16 + ty) * width + col];
         } else {
-            N_tile[ty * tileWidth + tx] = 0.0f;
+            N_tile[ty][tx] = 0.0f;
         }
         
         __syncthreads();
         
-        // Compute partial sum for this tile
-        for (int k = 0; k < tileWidth; k++) {
-            sum += M_tile[ty * tileWidth + k] * N_tile[k * tileWidth + tx];
+        // Multiply tiles
+        for (int k = 0; k < 16; k++) {
+            sum += M_tile[ty][k] * N_tile[k][tx];
         }
         
         __syncthreads();
     }
     
-    // Write result to global memory
     if (row < width && col < width) {
         P[row * width + col] = sum;
     }
@@ -121,15 +109,11 @@ int main() {
     srand(42);
     
     // Matrix sizes to test
-    int matrixSizes[] = {256, 512, 1024, 2048, 4096};
+    int matrixSizes[] = {256, 512, 1024};
     int numSizes = sizeof(matrixSizes) / sizeof(matrixSizes[0]);
     
-    // Tile widths to test
-    int tileWidths[] = {2, 4, 8, 16, 32};
-    int numTileWidths = sizeof(tileWidths) / sizeof(tileWidths[0]);
-    
     // Number of test iterations
-    const int numIterations = 10;
+    const int numIterations = 5;
     
     // Print device info
     cudaDeviceProp deviceProp;
@@ -138,12 +122,6 @@ int main() {
     printf("Number of SMs: %d\n", deviceProp.multiProcessorCount);
     printf("Max threads per block: %d\n", deviceProp.maxThreadsPerBlock);
     printf("Max shared memory per block: %lu bytes\n", deviceProp.sharedMemPerBlock);
-    printf("Warp size: %d\n", deviceProp.warpSize);
-    printf("\n");
-    
-    // Host arrays for storing timing results
-    float timedBasic[numSizes][numIterations];
-    float timedTiled[numSizes][numTileWidths][numIterations];
     
     // For each matrix size
     for (int s = 0; s < numSizes; s++) {
@@ -151,7 +129,7 @@ int main() {
         int size = width * width;
         size_t matrixBytes = size * sizeof(float);
         
-        printf("Testing matrix size: %d x %d\n", width, width);
+        printf("\nTesting matrix size: %d x %d\n", width, width);
         
         // Allocate host memory
         float *h_M = (float*)malloc(matrixBytes);
@@ -176,122 +154,89 @@ int main() {
         // Compute CPU result for verification
         matrixMultiplyCPU(h_P_CPU, h_M, h_N, width);
         
-        // Basic kernel for comparison (run once for correctness verification)
-        if (width <= 1024) {  // Skip for very large matrices
-            dim3 dimBlock(16, 16);
-            dim3 dimGrid((width + dimBlock.x - 1) / dimBlock.x, 
-                         (width + dimBlock.y - 1) / dimBlock.y);
+        // Basic kernel
+        dim3 basicBlock(16, 16);
+        dim3 basicGrid((width + basicBlock.x - 1) / basicBlock.x, 
+                       (width + basicBlock.y - 1) / basicBlock.y);
+        
+        // Create CUDA events for timing
+        cudaEvent_t start, stop;
+        CHECK_CUDA_ERROR(cudaEventCreate(&start));
+        CHECK_CUDA_ERROR(cudaEventCreate(&stop));
+        
+        float basicTime = 0.0f;
+        
+        // Run basic kernel for timing
+        for (int iter = 0; iter < numIterations; iter++) {
+            // Start timing
+            CHECK_CUDA_ERROR(cudaEventRecord(start));
             
-            // Create CUDA events for timing
-            cudaEvent_t start, stop;
-            CHECK_CUDA_ERROR(cudaEventCreate(&start));
-            CHECK_CUDA_ERROR(cudaEventCreate(&stop));
+            // Launch kernel
+            matrixMultiplyBasic<<<basicGrid, basicBlock>>>(d_P, d_M, d_N, width);
             
-            // Run basic kernel multiple times for timing
-            for (int iter = 0; iter < numIterations; iter++) {
-                // Start timing
-                CHECK_CUDA_ERROR(cudaEventRecord(start));
-                
-                // Launch kernel
-                matrixMultiplyBasic<<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                
-                // Stop timing
-                CHECK_CUDA_ERROR(cudaEventRecord(stop));
-                CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
-                
-                // Calculate elapsed time
-                CHECK_CUDA_ERROR(cudaEventElapsedTime(&timedBasic[s][iter], start, stop));
-            }
+            // Stop timing
+            CHECK_CUDA_ERROR(cudaEventRecord(stop));
+            CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
             
-            // Copy result back to host for verification
-            CHECK_CUDA_ERROR(cudaMemcpy(h_P, d_P, matrixBytes, cudaMemcpyDeviceToHost));
-            
-            // Verify basic kernel results
-            if (verifyResults(h_P_CPU, h_P, size)) {
-                printf("  Basic kernel verification: PASSED\n");
-            } else {
-                printf("  Basic kernel verification: FAILED\n");
-            }
-            
-            // Cleanup events
-            CHECK_CUDA_ERROR(cudaEventDestroy(start));
-            CHECK_CUDA_ERROR(cudaEventDestroy(stop));
+            // Calculate elapsed time
+            float elapsed;
+            CHECK_CUDA_ERROR(cudaEventElapsedTime(&elapsed, start, stop));
+            basicTime += elapsed;
         }
         
-        // Run tiled kernels with different tile widths
-        for (int t = 0; t < numTileWidths; t++) {
-            int tileWidth = tileWidths[t];
-            
-            printf("  Testing tile width: %d\n", tileWidth);
-            
-            // Create CUDA events for timing
-            cudaEvent_t start, stop;
-            CHECK_CUDA_ERROR(cudaEventCreate(&start));
-            CHECK_CUDA_ERROR(cudaEventCreate(&stop));
-            
-            dim3 dimBlock(tileWidth, tileWidth);
-            dim3 dimGrid((width + tileWidth - 1) / tileWidth, 
-                         (width + tileWidth - 1) / tileWidth);
-            
-            // Calculate shared memory size (two tiles)
-            size_t sharedMemSize = 2 * tileWidth * tileWidth * sizeof(float);
-            
-            // Run tiled kernel multiple times for timing
-            for (int iter = 0; iter < numIterations; iter++) {
-                // Start timing
-                CHECK_CUDA_ERROR(cudaEventRecord(start));
-                
-                // Launch kernel with dynamically allocated shared memory
-                matrixMultiplyTiled<<<dimGrid, dimBlock, sharedMemSize>>>(
-                    d_P, d_M, d_N, width, tileWidth);
-                
-                // Stop timing
-                CHECK_CUDA_ERROR(cudaEventRecord(stop));
-                CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
-                
-                // Calculate elapsed time
-                CHECK_CUDA_ERROR(cudaEventElapsedTime(&timedTiled[s][t][iter], start, stop));
-            }
-            
-            // Copy result back to host for verification
-            CHECK_CUDA_ERROR(cudaMemcpy(h_P, d_P, matrixBytes, cudaMemcpyDeviceToHost));
-            
-            // Verify tiled kernel results
-            if (verifyResults(h_P_CPU, h_P, size)) {
-                printf("    Verification: PASSED\n");
-            } else {
-                printf("    Verification: FAILED\n");
-            }
-            
-            // Cleanup events
-            CHECK_CUDA_ERROR(cudaEventDestroy(start));
-            CHECK_CUDA_ERROR(cudaEventDestroy(stop));
+        // Copy result back for verification
+        CHECK_CUDA_ERROR(cudaMemcpy(h_P, d_P, matrixBytes, cudaMemcpyDeviceToHost));
+        
+        // Verify basic kernel results
+        if (verifyResults(h_P_CPU, h_P, size)) {
+            printf("  Basic kernel verification: PASSED\n");
+        } else {
+            printf("  Basic kernel verification: FAILED\n");
         }
         
-        // Print timing results
-        printf("\n  Performance Results:\n");
+        // Calculate average time
+        basicTime /= numIterations;
+        printf("  Basic kernel average time: %.4f ms\n", basicTime);
         
-        // Basic kernel results
-        if (width <= 1024) {
-            float avgBasic = 0.0f;
-            for (int iter = 0; iter < numIterations; iter++) {
-                avgBasic += timedBasic[s][iter];
-            }
-            avgBasic /= numIterations;
-            printf("    Basic Kernel: %.4f ms\n", avgBasic);
+        // Tiled kernel (16x16)
+        dim3 tiledBlock(16, 16);
+        dim3 tiledGrid((width + tiledBlock.x - 1) / tiledBlock.x,
+                       (width + tiledBlock.y - 1) / tiledBlock.y);
+        
+        float tiledTime = 0.0f;
+        
+        // Run tiled kernel for timing
+        for (int iter = 0; iter < numIterations; iter++) {
+            // Start timing
+            CHECK_CUDA_ERROR(cudaEventRecord(start));
+            
+            // Launch kernel
+            matrixMultiplyTiled16<<<tiledGrid, tiledBlock>>>(d_P, d_M, d_N, width);
+            
+            // Stop timing
+            CHECK_CUDA_ERROR(cudaEventRecord(stop));
+            CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
+            
+            // Calculate elapsed time
+            float elapsed;
+            CHECK_CUDA_ERROR(cudaEventElapsedTime(&elapsed, start, stop));
+            tiledTime += elapsed;
         }
         
-        // Tiled kernel results
-        for (int t = 0; t < numTileWidths; t++) {
-            float avgTiled = 0.0f;
-            for (int iter = 0; iter < numIterations; iter++) {
-                avgTiled += timedTiled[s][t][iter];
-            }
-            avgTiled /= numIterations;
-            printf("    Tiled Kernel (TILE_WIDTH=%d): %.4f ms\n", tileWidths[t], avgTiled);
+        // Copy result back for verification
+        CHECK_CUDA_ERROR(cudaMemcpy(h_P, d_P, matrixBytes, cudaMemcpyDeviceToHost));
+        
+        // Verify tiled kernel results
+        if (verifyResults(h_P_CPU, h_P, size)) {
+            printf("  Tiled kernel verification: PASSED\n");
+        } else {
+            printf("  Tiled kernel verification: FAILED\n");
         }
         
-        printf("\n");
+        // Calculate average time
+        tiledTime /= numIterations;
+        printf("  Tiled kernel average time: %.4f ms\n", tiledTime);
+        printf("  Speedup: %.2fx\n", basicTime / tiledTime);
         
         // Cleanup
         free(h_M);
@@ -301,9 +246,11 @@ int main() {
         CHECK_CUDA_ERROR(cudaFree(d_M));
         CHECK_CUDA_ERROR(cudaFree(d_N));
         CHECK_CUDA_ERROR(cudaFree(d_P));
+        CHECK_CUDA_ERROR(cudaEventDestroy(start));
+        CHECK_CUDA_ERROR(cudaEventDestroy(stop));
     }
     
-    printf("All tests completed successfully!\n");
+    printf("\nAll tests completed successfully!\n");
     
     return 0;
 }
