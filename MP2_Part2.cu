@@ -28,12 +28,12 @@ void matrixMultiplyCPU(float *P, const float *M, const float *N, int M_height, i
 }
 
 // Tiled matrix multiplication for rectangular matrices with boundary checks
-template <int TILE_HEIGHT, int TILE_WIDTH>
-__global__ void matrixMultiplyTiledRectangular(float *P, const float *M, const float *N, 
-                                              int M_height, int M_width, int N_width) {
+// Fixed tile sizes of 12x18 as specified in the assignment
+__global__ void matrixMultiplyTiledRectangular12x18(float *P, const float *M, const float *N, 
+                                             int M_height, int M_width, int N_width) {
     // Shared memory for the tiles
-    __shared__ float M_tile[TILE_HEIGHT][TILE_WIDTH];
-    __shared__ float N_tile[TILE_WIDTH][TILE_WIDTH];
+    __shared__ float M_tile[12][18];
+    __shared__ float N_tile[18][18];
     
     int bx = blockIdx.x;
     int by = blockIdx.y;
@@ -41,25 +41,25 @@ __global__ void matrixMultiplyTiledRectangular(float *P, const float *M, const f
     int ty = threadIdx.y;
     
     // Calculate the row and column indices for this thread
-    int row = by * TILE_HEIGHT + ty;
-    int col = bx * TILE_WIDTH + tx;
+    int row = by * 12 + ty;
+    int col = bx * 18 + tx;
     
     float sum = 0.0f;
     
     // Loop over all tiles
-    int num_tiles = (M_width + TILE_WIDTH - 1) / TILE_WIDTH;
+    int num_tiles = (M_width + 18 - 1) / 18;
     
     for (int tile = 0; tile < num_tiles; tile++) {
         // Load M tile into shared memory with boundary checks
-        if (row < M_height && tile * TILE_WIDTH + tx < M_width) {
-            M_tile[ty][tx] = M[row * M_width + tile * TILE_WIDTH + tx];
+        if (row < M_height && tile * 18 + tx < M_width) {
+            M_tile[ty][tx] = M[row * M_width + tile * 18 + tx];
         } else {
             M_tile[ty][tx] = 0.0f;
         }
         
         // Load N tile into shared memory with boundary checks
-        if (tile * TILE_WIDTH + ty < M_width && col < N_width) {
-            N_tile[ty][tx] = N[(tile * TILE_WIDTH + ty) * N_width + col];
+        if (tile * 18 + ty < M_width && col < N_width) {
+            N_tile[ty][tx] = N[(tile * 18 + ty) * N_width + col];
         } else {
             N_tile[ty][tx] = 0.0f;
         }
@@ -67,9 +67,9 @@ __global__ void matrixMultiplyTiledRectangular(float *P, const float *M, const f
         __syncthreads();
         
         // Compute partial sum for this tile
-        for (int k = 0; k < TILE_WIDTH; k++) {
+        for (int k = 0; k < 18; k++) {
             // We only need to consider elements up to M_width for correct results
-            if (tile * TILE_WIDTH + k < M_width) {
+            if (tile * 18 + k < M_width) {
                 sum += M_tile[ty][k] * N_tile[k][tx];
             }
         }
@@ -191,9 +191,8 @@ int main() {
             // Start timing
             CHECK_CUDA_ERROR(cudaEventRecord(start));
             
-            // Since TILE_HEIGHT and TILE_WIDTH are compile-time constants (12 and 18),
-            // we directly use them in the template instantiation
-            matrixMultiplyTiledRectangular<12, 18><<<dimGrid, dimBlock>>>(
+            // Launch the kernel with fixed 12x18 tile size
+            matrixMultiplyTiledRectangular12x18<<<dimGrid, dimBlock>>>(
                 d_P, d_M, d_N, M_height, M_width, N_width);
             
             // Stop timing
