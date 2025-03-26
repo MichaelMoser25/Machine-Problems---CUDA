@@ -233,22 +233,16 @@ int main() {
                 CHECK_CUDA_ERROR(cudaEventRecord(start));
                 
                 // Launch appropriate kernel based on tile width
-                switch (tileWidth) {
-                    case 2:
-                        matrixMultiplyTiled<2><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                        break;
-                    case 4:
-                        matrixMultiplyTiled<4><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                        break;
-                    case 8:
-                        matrixMultiplyTiled<8><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                        break;
-                    case 16:
-                        matrixMultiplyTiled<16><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                        break;
-                    case 32:
-                        matrixMultiplyTiled<32><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                        break;
+                if (tileWidth == 2) {
+                    matrixMultiplyTiled<2><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
+                } else if (tileWidth == 4) {
+                    matrixMultiplyTiled<4><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
+                } else if (tileWidth == 8) {
+                    matrixMultiplyTiled<8><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
+                } else if (tileWidth == 16) {
+                    matrixMultiplyTiled<16><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
+                } else if (tileWidth == 32) {
+                    matrixMultiplyTiled<32><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
                 }
                 
                 // Stop timing
