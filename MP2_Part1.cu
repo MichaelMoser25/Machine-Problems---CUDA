@@ -14,6 +14,9 @@
     } \
 }
 
+// Define the maximum tile width we'll support
+#define MAX_TILE_WIDTH 32
+
 // CPU matrix multiplication for verification
 void matrixMultiplyCPU(float *P, const float *M, const float *N, int width) {
     for (int row = 0; row < width; row++) {
@@ -42,11 +45,14 @@ __global__ void matrixMultiplyBasic(float *P, const float *M, const float *N, in
 }
 
 // Tiled matrix multiplication with shared memory
-template <int TILE_WIDTH>
-__global__ void matrixMultiplyTiled(float *P, const float *M, const float *N, int width) {
-    // Shared memory for the tiles
-    __shared__ float M_tile[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float N_tile[TILE_WIDTH][TILE_WIDTH];
+// Note: This version uses a runtime variable for tile width
+__global__ void matrixMultiplyTiled(float *P, const float *M, const float *N, int width, int tileWidth) {
+    // Dynamically sized shared memory declared externally
+    extern __shared__ float sharedMem[];
+    
+    // Divide shared memory: first half for M_tile, second half for N_tile
+    float *M_tile = sharedMem;
+    float *N_tile = &sharedMem[tileWidth * tileWidth];
     
     int bx = blockIdx.x;
     int by = blockIdx.y;
@@ -54,31 +60,31 @@ __global__ void matrixMultiplyTiled(float *P, const float *M, const float *N, in
     int ty = threadIdx.y;
     
     // Calculate the row and column indices for this thread
-    int row = by * TILE_WIDTH + ty;
-    int col = bx * TILE_WIDTH + tx;
+    int row = by * tileWidth + ty;
+    int col = bx * tileWidth + tx;
     
     float sum = 0.0f;
     
     // Loop over all tiles
-    for (int tile = 0; tile < (width + TILE_WIDTH - 1) / TILE_WIDTH; tile++) {
+    for (int tile = 0; tile < (width + tileWidth - 1) / tileWidth; tile++) {
         // Load tiles into shared memory
-        if (row < width && tile * TILE_WIDTH + tx < width) {
-            M_tile[ty][tx] = M[row * width + tile * TILE_WIDTH + tx];
+        if (row < width && tile * tileWidth + tx < width) {
+            M_tile[ty * tileWidth + tx] = M[row * width + tile * tileWidth + tx];
         } else {
-            M_tile[ty][tx] = 0.0f;
+            M_tile[ty * tileWidth + tx] = 0.0f;
         }
         
-        if (tile * TILE_WIDTH + ty < width && col < width) {
-            N_tile[ty][tx] = N[(tile * TILE_WIDTH + ty) * width + col];
+        if (tile * tileWidth + ty < width && col < width) {
+            N_tile[ty * tileWidth + tx] = N[(tile * tileWidth + ty) * width + col];
         } else {
-            N_tile[ty][tx] = 0.0f;
+            N_tile[ty * tileWidth + tx] = 0.0f;
         }
         
         __syncthreads();
         
         // Compute partial sum for this tile
-        for (int k = 0; k < TILE_WIDTH; k++) {
-            sum += M_tile[ty][k] * N_tile[k][tx];
+        for (int k = 0; k < tileWidth; k++) {
+            sum += M_tile[ty * tileWidth + k] * N_tile[k * tileWidth + tx];
         }
         
         __syncthreads();
@@ -227,23 +233,17 @@ int main() {
             dim3 dimGrid((width + tileWidth - 1) / tileWidth, 
                          (width + tileWidth - 1) / tileWidth);
             
+            // Calculate shared memory size (two tiles)
+            size_t sharedMemSize = 2 * tileWidth * tileWidth * sizeof(float);
+            
             // Run tiled kernel multiple times for timing
             for (int iter = 0; iter < numIterations; iter++) {
                 // Start timing
                 CHECK_CUDA_ERROR(cudaEventRecord(start));
                 
-                // Launch appropriate kernel based on tile width
-                if (tileWidth == 2) {
-                    matrixMultiplyTiled<2><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                } else if (tileWidth == 4) {
-                    matrixMultiplyTiled<4><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                } else if (tileWidth == 8) {
-                    matrixMultiplyTiled<8><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                } else if (tileWidth == 16) {
-                    matrixMultiplyTiled<16><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                } else if (tileWidth == 32) {
-                    matrixMultiplyTiled<32><<<dimGrid, dimBlock>>>(d_P, d_M, d_N, width);
-                }
+                // Launch kernel with dynamically allocated shared memory
+                matrixMultiplyTiled<<<dimGrid, dimBlock, sharedMemSize>>>(
+                    d_P, d_M, d_N, width, tileWidth);
                 
                 // Stop timing
                 CHECK_CUDA_ERROR(cudaEventRecord(stop));
