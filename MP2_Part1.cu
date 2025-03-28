@@ -4,7 +4,7 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
-// Basic GPU matrix multiplication
+//  GPU matrix multiplication
 __global__ void matrixMultiplyBasic(float* P, const float* M, const float* N, int width) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -18,7 +18,7 @@ __global__ void matrixMultiplyBasic(float* P, const float* M, const float* N, in
     }
 }
 
-// Tiled matrix multiplication with shared memory - tile width 2
+// Tiled matrix multiplication with shared memory  tile width 2
 __global__ void matrixMultiplyTiled2(float* P, const float* M, const float* N, int width) {
     __shared__ float M_tile[2][2];
     __shared__ float N_tile[2][2];
@@ -62,7 +62,7 @@ __global__ void matrixMultiplyTiled2(float* P, const float* M, const float* N, i
     }
 }
 
-// Tiled matrix multiplication with shared memory - tile width 4
+// Tiled matrix multiplication with shared memory tile width 4
 __global__ void matrixMultiplyTiled4(float* P, const float* M, const float* N, int width) {
     __shared__ float M_tile[4][4];
     __shared__ float N_tile[4][4];
@@ -106,7 +106,7 @@ __global__ void matrixMultiplyTiled4(float* P, const float* M, const float* N, i
     }
 }
 
-// Tiled matrix multiplication with shared memory - tile width 8
+// Tiled matrix multiplication with shared memory tile width 8
 __global__ void matrixMultiplyTiled8(float* P, const float* M, const float* N, int width) {
     __shared__ float M_tile[8][8];
     __shared__ float N_tile[8][8];
@@ -150,7 +150,7 @@ __global__ void matrixMultiplyTiled8(float* P, const float* M, const float* N, i
     }
 }
 
-// Tiled matrix multiplication with shared memory - tile width 16
+// Tiled matrix multiplication with shared memory tile width 16
 __global__ void matrixMultiplyTiled16(float* P, const float* M, const float* N, int width) {
     __shared__ float M_tile[16][16];
     __shared__ float N_tile[16][16];
@@ -194,7 +194,7 @@ __global__ void matrixMultiplyTiled16(float* P, const float* M, const float* N, 
     }
 }
 
-// Tiled matrix multiplication with shared memory - tile width 32
+// Tiled matrix multiplication with shared memory tile width 32
 __global__ void matrixMultiplyTiled32(float* P, const float* M, const float* N, int width) {
     __shared__ float M_tile[32][32];
     __shared__ float N_tile[32][32];
@@ -275,11 +275,11 @@ int main() {
     // Set random seed
     srand(42);
 
-    // Matrix sizes to test
+    // Matrix sizes test
     int matrixSizes[] = { 256, 512, 1024, 2048, 4096 };
     int numSizes = sizeof(matrixSizes) / sizeof(matrixSizes[0]);
 
-    // Tile widths to test
+    // Tile widths test
     int tileWidths[] = { 2, 4, 8, 16, 32 };
     int numTileWidths = sizeof(tileWidths) / sizeof(tileWidths[0]);
 
