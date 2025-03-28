@@ -1,3 +1,7 @@
+// Michael Moser
+// 20349246
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
