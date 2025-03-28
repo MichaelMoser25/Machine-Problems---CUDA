@@ -11,7 +11,7 @@
 // Constants and macros
 #define EPSILON 1e-6  // Tolerance for floating-point comparison
 
-// Error checking - use only where needed
+// Error checking 
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \
     if (err != cudaSuccess) { \
@@ -20,7 +20,7 @@
     } \
 } while(0)
 
-// Multi-threaded kernel - each thread computes one matrix element
+// Multi-threaded kernel each thread computes one matrix element
 __global__ void matrixMultiply(float* C, const float* A, const float* B, int n) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -34,7 +34,7 @@ __global__ void matrixMultiply(float* C, const float* A, const float* B, int n) 
     }
 }
 
-// Single-threaded kernel for comparison
+// Singlethreaded kernel for comparison
 __global__ void singleThreadMatrixMultiply(float* C, const float* A, const float* B, int n) {
     // One thread does all the work
     for (int i = 0; i < n; i++) {
@@ -192,7 +192,7 @@ int main() {
             }
         }
 
-        // Measure device-to-host transfer time
+        // Measure deviceto host transfer time
         cudaEventRecord(startEvent);
         cudaMemcpy(h_C, d_C, bytes, cudaMemcpyDeviceToHost);
         cudaEventRecord(stopEvent);
@@ -211,7 +211,7 @@ int main() {
         free(h_cpuC);
     }
 
-    // Results summary - Part 1: Data Transfer Analysis
+    // Results summary Part 1: Data Transfer Analysis
     printf("===== PART 1: DATA TRANSFER ANALYSIS =====\n");
     printf("Matrix Size\tH2D (ms)\tD2H (ms)\n");
     for (int s = 0; s < 4; s++) {
